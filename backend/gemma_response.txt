@@ -1,0 +1,25 @@
+Hello! I am your **AI Tutor** here at **DebugYourCode (DYC)**. I will provide a rigorous, technical breakdown of the provided C++ code to ensure you master both the logic and the underlying computer science principles.
+
+---
+
+### 1. High-Level Overview & Logic
+The objective of this code is to **detect the first duplicate element** in a given collection of integers. 
+
+**The Algorithm:**
+The code employs a **Linear Scan with a Hash Set**. It iterates through the array once, checking if the current element has been encountered before. 
+- If the element exists in the `seen` set, it identifies it as a duplicate and terminates.
+- If the element does not exist, it adds it to the set and moves to the next.
+
+**Does it achieve the goal?**
+Yes. The algorithm is logically sound for identifying the first occurrence of a duplicate in a single pass.
+
+---
+
+### 2. Step-by-Step Walkthrough
+**Input:** `arr = {10, 20, 30, 40, 50}`
+
+| Iteration | `i` | `arr[i]` | `seen.find(arr[i])` | Action | `seen` State (Internal) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | 0 | 10 | Not Found | Insert 10 | `{10}` |
+| 2 | 1 | 20 | Not Found | Insert 20 | `{10, 20}` |
+| 3 | 
