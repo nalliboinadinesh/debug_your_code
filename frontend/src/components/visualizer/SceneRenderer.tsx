@@ -148,13 +148,22 @@ export const SceneRenderer: React.FC<SceneRendererProps> = ({
     }
   }
 
-  // Extract array data and pointer mapping from currentEvent, or fallback to any event with data
-  const dataStructures = currentEvent?.dataStructures || {};
+  // Extract array/data structure and pointer mapping from currentEvent, or fallback
+  const rawDataStructures = currentEvent?.dataStructures || {};
+  const dataStructures: Record<string, any> = {};
+  for (const [k, v] of Object.entries(rawDataStructures)) {
+    if (!k.startsWith('_')) {
+      dataStructures[k] = v;
+    }
+  }
+
   let arrayEntries = Object.entries(dataStructures);
   if (arrayEntries.length === 0 && allEvents.length > 0) {
     for (const ev of allEvents) {
       if (ev.dataStructures && Object.keys(ev.dataStructures).length > 0) {
-        const found = Object.entries(ev.dataStructures).find(([, arr]) => Array.isArray(arr) && arr.length > 0);
+        const found = Object.entries(ev.dataStructures).find(
+          ([k, arr]) => !k.startsWith('_') && (Array.isArray(arr) || (arr && typeof arr === 'object' && ((arr as any).__isMap || (arr as any).__isPair)))
+        );
         if (found) {
           arrayEntries = [found];
           break;
@@ -163,8 +172,26 @@ export const SceneRenderer: React.FC<SceneRendererProps> = ({
     }
   }
   const primaryArray = arrayEntries.length > 0 ? arrayEntries[0] : null;
-  const arrayData = primaryArray ? primaryArray[1] : [10, 20, 30, 40, 50, 60, 70];
+  const rawData = primaryArray ? primaryArray[1] : [10, 20, 30, 40, 50, 60, 70];
   const arrayName = primaryArray ? primaryArray[0] : 'arr';
+
+  // Format arrayData if it's a map or pair object
+  let arrayData: any[] = [];
+  if (Array.isArray(rawData)) {
+    arrayData = rawData;
+  } else if (rawData && typeof rawData === 'object') {
+    if (rawData.__isMap) {
+      arrayData = (rawData.entries || []).map((e: any) => `[${e.key}] = ${e.value}`);
+    } else if (rawData.__isPair) {
+      arrayData = [`first = ${rawData.first}`, `second = ${rawData.second}`];
+    } else if (rawData.__isLinear && Array.isArray(rawData.elements)) {
+      arrayData = rawData.elements;
+    } else {
+      arrayData = Object.values(rawData);
+    }
+  } else {
+    arrayData = [10, 20, 30, 40, 50, 60, 70];
+  }
 
   // Map variables that act as pointers / indices into the array
   const pointerIndices: Record<string, number> = {};

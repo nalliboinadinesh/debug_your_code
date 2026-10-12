@@ -73,6 +73,14 @@ class CppAstAnalyzer:
             # Check if triangular: e.g. j < n - i or j < i
             is_triangular = bool(re.search(r"[a-zA-Z_]\w*\s*[-+]\s*[a-zA-Z_]\w*", cond))
 
+            # Check if inner body has map/tree lookup: e.g. freq[...] or freq.insert
+            # Find loop body
+            body_match = re.search(rf"{re.escape(match.group(0))}\s*\{{([^}}]+)\}}", code)
+            body_text = body_match.group(1) if body_match else ""
+            has_map_op = bool(re.search(r"\b([a-zA-Z_]\w*)\s*\[.+\]\s*(?:\+\+|\-\-|\+=|=)", body_text)) or any(
+                m in body_text for m in ["map", "freq", "count", "seen", "insert", "find"]
+            )
+
             loops.append({
                 "type": "for",
                 "var": var,
@@ -82,6 +90,24 @@ class CppAstAnalyzer:
                 "step_type": step_type,
                 "step_val": step_val,
                 "is_triangular": is_triangular,
+                "body": body_text,
+                "has_map_op": has_map_op,
+                "raw": match.group(0)
+            })
+
+        # Match range-based for loops: for (auto it : freq) or for (const auto &x : arr)
+        range_for_pattern = re.compile(
+            r"for\s*\(\s*(?:const\s+)?auto(?:\s*&)?\s*([a-zA-Z_]\w*)\s*:\s*([a-zA-Z_]\w*)\s*\)"
+        )
+        for match in range_for_pattern.finditer(code):
+            elem_var = match.group(1).strip()
+            container_var = match.group(2).strip()
+            loops.append({
+                "type": "range_for",
+                "elem_var": elem_var,
+                "container_var": container_var,
+                "step_type": "linear",
+                "step_val": 1,
                 "raw": match.group(0)
             })
 
@@ -116,9 +142,7 @@ class CppAstAnalyzer:
                 continue
                 
             # Check if the function calls itself inside the body
-            # Simple body search from function start
             body_start = match.end()
-            # Find matching closing brace
             brace_count = 1
             idx = body_start
             while idx < len(code) and brace_count > 0:
@@ -146,7 +170,7 @@ class CppAstAnalyzer:
     @staticmethod
     def extract_storage(code: str) -> Dict[str, Any]:
         """
-        Detects fixed arrays, std::vector, dynamically allocated heap objects.
+        Detects fixed arrays, std::vector, std::map, std::set, std::stack/queue, heap.
         """
         # Array declarations: int arr[100];
         arr_pattern = re.compile(r"\b(int|float|double|char|long|bool)\s+([a-zA-Z_]\w*)\s*\[(\d+)\]")
@@ -167,11 +191,44 @@ class CppAstAnalyzer:
                 "name": m.group(2).strip()
             })
 
+        # Maps: std::map<int, int> m; or unordered_map<string, int>
+        map_pattern = re.compile(r"\b(?:std::)?(unordered_map|map|multimap)\s*<([^,]+),\s*([^>]+)>\s*([a-zA-Z_]\w*)")
+        maps = []
+        for m in map_pattern.finditer(code):
+            maps.append({
+                "kind": m.group(1),
+                "key_type": m.group(2).strip(),
+                "val_type": m.group(3).strip(),
+                "name": m.group(4).strip()
+            })
+
+        # Sets: std::set<int> s; or unordered_set<int>
+        set_pattern = re.compile(r"\b(?:std::)?(unordered_set|set|multiset)\s*<([^>]+)>\s*([a-zA-Z_]\w*)")
+        sets = []
+        for m in set_pattern.finditer(code):
+            sets.append({
+                "kind": m.group(1),
+                "elem_type": m.group(2).strip(),
+                "name": m.group(3).strip()
+            })
+
+        # Heaps / Priority Queue: std::priority_queue<int> pq;
+        pq_pattern = re.compile(r"\b(?:std::)?priority_queue\s*<([^>]+)>\s*([a-zA-Z_]\w*)")
+        heaps = []
+        for m in pq_pattern.finditer(code):
+            heaps.append({
+                "elem_type": m.group(1).strip(),
+                "name": m.group(2).strip()
+            })
+
         # Dynamic allocations: new int[...] or malloc
         dynamic_allocs = re.findall(r"\bnew\s+([a-zA-Z_]\w*)\s*\[([^\]]+)\]", code)
         
         return {
             "fixed_arrays": arrays,
             "vectors": vectors,
+            "maps": maps,
+            "sets": sets,
+            "heaps": heaps,
             "dynamic_allocs": dynamic_allocs
         }

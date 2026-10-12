@@ -1,3 +1,4 @@
+import re
 from typing import Dict, Any, List, Optional
 from app.schemas.analysis import (
     ComplexityAnalysisRequest,
@@ -73,8 +74,11 @@ class ComplexityAnalyzer:
         # Check Loops if no recursion
         elif loops:
             num_loops = len(loops)
-            # Check for nested loops
-            is_nested = num_loops >= 2 and any(l.get("type") == "for" for l in loops)
+            # Check for actual nested loops (inner loop inside outer loop body)
+            is_nested = any(
+                l.get("body") and ("for " in l.get("body") or "while " in l.get("body"))
+                for l in loops
+            ) or bool(re.search(r"(?:for|while)\s*\([^)]*\)\s*\{[^{}]*(?:for|while)\s*\(", code))
             # Check if triangular
             has_triangular = any(l.get("is_triangular") for l in loops)
             
@@ -142,6 +146,46 @@ class ComplexityAnalyzer:
                     time_info.dominantTerm = "N"
                     time_info.stepFormula = "T(N) = N"
                     time_info.mathematicalDerivation = "The two pointers approach each other, decrementing distance (right - left) by at least 1 per iteration, leading to at most N total steps."
+                elif storage.get("maps") and any(l.get("has_map_op") for l in loops if l.get("type") == "for"):
+                    m = storage["maps"][0]
+                    if m.get("kind") == "map":
+                        pattern_name = f"Frequency Map / Balanced BST Insertion (`{m['name']}`)"
+                        time_info.worstCase = "O(N log K)"
+                        time_info.averageCase = "O(N log K)"
+                        time_info.bestCase = "O(N)"
+                        time_info.dominantTerm = "N log K"
+                        time_info.stepFormula = "T(N) = \\sum_{i=1}^{N} \\log(i) = O(N \\log K)"
+                        time_info.mathematicalDerivation = (
+                            f"The loop iterates N times. Inside each iteration, `{m['name']}[arr[i]]++` performs a lookup "
+                            f"and insertion on `std::map` (implemented as a self-balancing Red-Black Tree). "
+                            f"Each BST operation with K unique elements takes O(log K) time. "
+                            f"Total insertion time: O(N log K) (worst case O(N log N) when all elements are distinct). "
+                            f"Subsequent range traversal loop takes O(K) time, which is strictly dominated by O(N log K)."
+                        )
+                        time_info.assumptions.append("N is input array length; K is number of unique elements (K <= N).")
+                    else:
+                        pattern_name = f"Hash Table Frequency Counting (`{m['name']}`)"
+                        time_info.worstCase = "O(N^2)"
+                        time_info.averageCase = "O(N)"
+                        time_info.bestCase = "O(N)"
+                        time_info.dominantTerm = "N"
+                        time_info.stepFormula = "T(N) = N \\times O(1) = O(N)"
+                        time_info.mathematicalDerivation = (
+                            f"The loop iterates N times. Inside each iteration, `{m['name']}[arr[i]]++` performs average O(1) hash table lookup. "
+                            f"Average total time is O(N). In the worst case (hash collision degradation), lookup is O(N), yielding O(N^2)."
+                        )
+                elif storage.get("sets") and any(l.get("has_map_op") for l in loops if l.get("type") == "for"):
+                    s = storage["sets"][0]
+                    pattern_name = f"Set Membership & Insertion (`{s['name']}`)"
+                    is_ordered = s.get("kind") == "set"
+                    time_info.worstCase = "O(N log N)" if is_ordered else "O(N^2)"
+                    time_info.averageCase = "O(N log K)" if is_ordered else "O(N)"
+                    time_info.bestCase = "O(N)"
+                    time_info.dominantTerm = "N log K" if is_ordered else "N"
+                    time_info.stepFormula = "T(N) = O(N \\log K)" if is_ordered else "T(N) = O(N)"
+                    time_info.mathematicalDerivation = (
+                        f"Iterating N items with `{s['name']}` insertion takes O(N log K) for balanced BST set, or average O(N) for hash set."
+                    )
                 else:
                     pattern_name = "Single Linear Loop (i++)"
                     time_info.worstCase = "O(N)"
@@ -202,7 +246,7 @@ class ComplexityAnalyzer:
                 )
 
         # Check arrays & vectors
-        if storage["fixed_arrays"]:
+        if storage.get("fixed_arrays"):
             for arr in storage["fixed_arrays"]:
                 sz = arr["size"]
                 bytes_est = sz * 4
@@ -216,20 +260,47 @@ class ComplexityAnalyzer:
                     )
                 )
                 
-        if storage["vectors"]:
+        if storage.get("vectors"):
             for vec in storage["vectors"]:
-                space_info.auxiliarySpace = "O(N)" if space_info.auxiliarySpace == "O(1)" else space_info.auxiliarySpace
                 space_info.totalSpace = "O(N)"
                 space_info.breakdown.append(
                     SpaceBreakdownItem(
                         item=f"std::vector<{vec['elem_type']}> `{vec['name']}`",
                         category="vector",
                         sizeEstimate="O(N) heap capacity",
-                        details="Dynamic contiguous vector buffer on the heap."
+                        details="Dynamic contiguous vector buffer on the heap (input/storage)."
                     )
                 )
 
-        if storage["dynamic_allocs"]:
+        # Check maps (Auxiliary Space O(K))
+        if storage.get("maps"):
+            for m in storage["maps"]:
+                space_info.auxiliarySpace = "O(K)"
+                space_info.totalSpace = "O(N + K)" if storage.get("vectors") else "O(K)"
+                space_info.breakdown.append(
+                    SpaceBreakdownItem(
+                        item=f"std::{m['kind']}<{m['key_type']}, {m['val_type']}> `{m['name']}`",
+                        category="map",
+                        sizeEstimate="O(K) heap nodes",
+                        details=f"Auxiliary storage for at most K unique keys. Tree nodes allocate heap memory dynamically."
+                    )
+                )
+
+        # Check sets (Auxiliary Space O(K))
+        if storage.get("sets"):
+            for s in storage["sets"]:
+                space_info.auxiliarySpace = "O(K)" if space_info.auxiliarySpace == "O(1)" else space_info.auxiliarySpace
+                space_info.totalSpace = "O(N + K)" if storage.get("vectors") else "O(K)"
+                space_info.breakdown.append(
+                    SpaceBreakdownItem(
+                        item=f"std::{s['kind']}<{s['elem_type']}> `{s['name']}`",
+                        category="set",
+                        sizeEstimate="O(K) heap nodes",
+                        details="Auxiliary storage for at most K unique elements."
+                    )
+                )
+
+        if storage.get("dynamic_allocs"):
             space_info.limitations.append("Contains explicit `new[]` dynamic heap allocations tracked separately.")
 
         return ComplexityAnalysisResponse(

@@ -25,16 +25,21 @@ class EventNormalizer:
             if 1 <= line_no <= len(code_lines):
                 line_text = code_lines[line_no - 1].strip()
                 
-            # Separate arrays, pointers, and scalar variables
-            arrays = {}
+            # Separate data structures (arrays, maps, pairs, linear), pointers, and scalar variables
+            data_structures = {}
             pointers = {}
             scalars = {}
             
             for k, v in curr_locals.items():
                 if isinstance(v, list):
-                    arrays[k] = v
-                elif isinstance(v, dict) and v.get("__isPointer"):
-                    pointers[k] = v
+                    data_structures[k] = v
+                elif isinstance(v, dict):
+                    if v.get("__isPointer"):
+                        pointers[k] = v
+                    elif v.get("__isMap") or v.get("__isPair") or v.get("__isLinear"):
+                        data_structures[k] = v
+                    else:
+                        scalars[k] = v
                 else:
                     scalars[k] = v
 
@@ -79,23 +84,36 @@ class EventNormalizer:
                             description = f"Variable `{var_name}` updated from `{old_val}` to `{new_val}`"
                         break
 
-                # 3. Check for array changes
+                # 3. Check for data structure changes (arrays, maps, pairs)
                 if event_type == "statement_enter":
-                    for arr_name, curr_arr in arrays.items():
-                        prev_arr = prev_locals.get(arr_name)
-                        if isinstance(prev_arr, list):
+                    for ds_name, curr_ds in data_structures.items():
+                        prev_ds = prev_locals.get(ds_name)
+                        if isinstance(curr_ds, list) and isinstance(prev_ds, list):
                             diff_indices = [
-                                i for i in range(min(len(curr_arr), len(prev_arr)))
-                                if curr_arr[i] != prev_arr[i]
+                                i for i in range(min(len(curr_ds), len(prev_ds)))
+                                if curr_ds[i] != prev_ds[i]
                             ]
                             if diff_indices:
                                 event_type = "array_write"
                                 active_indices = diff_indices
-                                changed_var = arr_name
-                                old_val = [prev_arr[i] for i in diff_indices]
-                                new_val = [curr_arr[i] for i in diff_indices]
+                                changed_var = ds_name
+                                old_val = [prev_ds[i] for i in diff_indices]
+                                new_val = [curr_ds[i] for i in diff_indices]
                                 idx_str = ", ".join(f"[{i}]" for i in diff_indices)
-                                description = f"Array `{arr_name}` element{idx_str} updated to {new_val}"
+                                description = f"Array `{ds_name}` element{idx_str} updated to {new_val}"
+                                break
+                        elif isinstance(curr_ds, dict) and curr_ds.get("__isMap"):
+                            if prev_ds != curr_ds:
+                                event_type = "map_update"
+                                changed_var = ds_name
+                                entries_str = ", ".join(f"[{e['key']}]={e['value']}" for e in curr_ds.get("entries", [])[:5])
+                                description = f"Map `{ds_name}` updated: {{{entries_str}}}"
+                                break
+                        elif isinstance(curr_ds, dict) and curr_ds.get("__isPair"):
+                            if prev_ds != curr_ds:
+                                event_type = "loop_iteration" if (line_text.startswith("for") or line_text.startswith("while")) else "variable_update"
+                                changed_var = ds_name
+                                description = f"Pair `{ds_name}`: first={curr_ds.get('first')}, second={curr_ds.get('second')}"
                                 break
 
                 # 4. Check for pointer changes
@@ -138,7 +156,7 @@ class EventNormalizer:
                 description=description,
                 currentScope=func_name,
                 callStack=call_stack,
-                dataStructures=arrays,
+                dataStructures=data_structures,
                 pointers=pointers,
                 variables=scalars,
                 activeIndices=active_indices,

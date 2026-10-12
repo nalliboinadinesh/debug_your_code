@@ -549,6 +549,7 @@ export const WorkspacePage: React.FC<WorkspacePageProps> = ({ onBackToLanding })
                 nextEvent={nextEvent}
                 totalSteps={events.length}
                 complexity={complexityResult}
+                detectedStructures={executionResult?.detectedStructures}
               />
             </div>
           </div>

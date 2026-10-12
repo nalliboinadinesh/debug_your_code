@@ -35,7 +35,7 @@ export interface ExecutionEvent {
   description: string;
   currentScope?: string;
   callStack: CallStackFrame[];
-  dataStructures: Record<string, any[]>;
+  dataStructures: Record<string, any>;
   pointers: Record<string, PointerInfo>;
   variables: Record<string, any>;
   activeIndices?: number[] | null;

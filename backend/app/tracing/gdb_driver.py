@@ -83,7 +83,54 @@ def parse_val(v, depth=0):
                     return parsed
             return []
 
-        # 3. std::set / std::unordered_set inspection
+        # 3. std::map / std::unordered_map / multimap inspection
+        if "map" in type_str or "map with" in str(v).lower():
+            s = str(v)
+            if "with 0 elements" in s or "<error reading" in s:
+                return {"__isMap": True, "type": "map", "size": 0, "entries": []}
+            import re
+            pairs = re.findall(r"\[([^\]]+)\]\s*=\s*([^,}]+)", s)
+            if pairs:
+                entries = []
+                for k_raw, val_raw in pairs[:50]:
+                    k_str = k_raw.strip()
+                    v_str = val_raw.strip()
+                    k_parsed = int(k_str) if (k_str.isdigit() or (k_str.startswith('-') and k_str[1:].isdigit())) else k_str
+                    v_parsed = int(v_str) if (v_str.isdigit() or (v_str.startswith('-') and v_str[1:].isdigit())) else v_str
+                    entries.append({"key": k_parsed, "value": v_parsed})
+                map_kind = "unordered_map" if "unordered" in type_str else "map"
+                return {"__isMap": True, "type": map_kind, "size": len(entries), "entries": entries}
+
+        # 4. std::pair inspection
+        if "pair<" in type_str or "first =" in str(v):
+            s = str(v)
+            import re
+            m = re.search(r"first\s*=\s*([^,}]+),\s*second\s*=\s*([^}]+)", s)
+            if m:
+                f_str = m.group(1).strip()
+                s_str = m.group(2).strip()
+                f_val = int(f_str) if (f_str.isdigit() or (f_str.startswith('-') and f_str[1:].isdigit())) else f_str
+                s_val = int(s_str) if (s_str.isdigit() or (s_str.startswith('-') and s_str[1:].isdigit())) else s_str
+                return {"__isPair": True, "first": f_val, "second": s_val}
+
+        # 5. std::stack / std::queue / std::deque
+        if "stack<" in type_str or "queue<" in type_str or "deque<" in type_str:
+            try:
+                c = v['c']
+                parsed_c = parse_val(c, depth + 1)
+                if isinstance(parsed_c, list):
+                    kind = "stack" if "stack<" in type_str else ("queue" if "queue<" in type_str else "deque")
+                    return {"__isLinear": True, "type": kind, "elements": parsed_c}
+            except Exception:
+                pass
+
+        # 6. std::string
+        if "string" in type_str and "basic_string" in type_str:
+            s = str(v)
+            if '"' in s:
+                return s[s.find('"') + 1 : s.rfind('"')]
+
+        # 7. std::set / std::unordered_set inspection
         if "set" in type_str or "set with" in str(v).lower():
             s = str(v)
             if "with 0 elements" in s or "<error reading" in s:
@@ -105,13 +152,13 @@ def parse_val(v, depth=0):
                 return parsed
             return []
 
-        # 4. C-style arrays
+        # 8. C-style arrays
         if code == gdb.TYPE_CODE_ARRAY:
             low, high = t.range()
             count = min(high - low + 1, 50)
             return [parse_val(v[i], depth + 1) for i in range(low, low + count)]
             
-        # 4. Pointers
+        # 9. Pointers
         elif code == gdb.TYPE_CODE_PTR:
             addr = hex(int(v))
             deref = None
@@ -121,7 +168,7 @@ def parse_val(v, depth=0):
                 pass
             return {"__isPointer": True, "address": addr, "target": deref}
             
-        # 5. Scalars
+        # 10. Scalars
         elif code in (gdb.TYPE_CODE_INT, gdb.TYPE_CODE_FLT, gdb.TYPE_CODE_BOOL):
             s = str(v)
             if s.isdigit() or (s.startswith('-') and s[1:].isdigit()):

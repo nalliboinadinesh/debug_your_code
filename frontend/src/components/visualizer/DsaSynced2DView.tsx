@@ -1,5 +1,6 @@
 import React from 'react';
 import { ExecutionEvent } from '../../types';
+import { formatDisplayValue, isGarbageValue } from '../../utils/dataStructures';
 
 interface DsaSynced2DViewProps {
   currentEvent?: ExecutionEvent | null;
@@ -13,12 +14,31 @@ export const DsaSynced2DView: React.FC<DsaSynced2DViewProps> = ({
   allEvents = [],
 }) => {
   // Extract real runtime array or fallback to any event with data
-  const arrays = currentEvent?.dataStructures || {};
-  let arrayEntries = Object.entries(arrays);
+  const rawDataStructures = currentEvent?.dataStructures || {};
+  
+  // Filter out compiler variables (like __for_range)
+  const arrays: Record<string, any> = {};
+  for (const [k, v] of Object.entries(rawDataStructures)) {
+    if (!k.startsWith('_')) {
+      arrays[k] = v;
+    }
+  }
+
+  // Find map and pair structures
+  const mapEntry = Object.entries(arrays).find(
+    ([k, v]) => (v && typeof v === 'object' && v.__isMap) || k.toLowerCase().includes('freq') || k.toLowerCase().includes('map')
+  );
+  const pairEntry = Object.entries(arrays).find(
+    ([k, v]) => k === 'it' || (v && typeof v === 'object' && v.__isPair)
+  );
+
+  let arrayEntries = Object.entries(arrays).filter(([k]) => k !== 'it' && (!mapEntry || k !== mapEntry[0]));
   if (arrayEntries.length === 0 && allEvents.length > 0) {
     for (const ev of allEvents) {
       if (ev.dataStructures && Object.keys(ev.dataStructures).length > 0) {
-        const found = Object.entries(ev.dataStructures).find(([, arr]) => Array.isArray(arr) && arr.length > 0);
+        const found = Object.entries(ev.dataStructures).find(
+          ([k, arr]) => !k.startsWith('_') && k !== 'it' && Array.isArray(arr) && arr.length > 0
+        );
         if (found) {
           arrayEntries = [found];
           break;
@@ -26,7 +46,7 @@ export const DsaSynced2DView: React.FC<DsaSynced2DViewProps> = ({
       }
     }
   }
-  const primaryArr = arrayEntries.length > 0 ? arrayEntries[0][1] : [10, 20, 30, 40, 50, 60, 70];
+  const primaryArr = arrayEntries.length > 0 && Array.isArray(arrayEntries[0][1]) ? arrayEntries[0][1] : [10, 20, 30, 40, 50, 60, 70];
   const primaryName = arrayEntries.length > 0 ? arrayEntries[0][0] : 'arr';
 
   const vars = currentEvent?.variables || {};
@@ -89,14 +109,100 @@ export const DsaSynced2DView: React.FC<DsaSynced2DViewProps> = ({
 
   return (
     <div className="w-full h-full overflow-y-auto p-4 space-y-4 bg-[#070b13] font-mono text-sm select-none">
-      {/* ═══ ARRAY CARD ═══ */}
+      {/* ═══ MAP / ASSOCIATIVE CARD (Level 3) ═══ */}
+      {mapEntry && (
+        <div className="rounded-xl border border-amber-500/30 bg-[#161208]/90 p-4 shadow-lg backdrop-blur-md">
+          <div className="flex items-center justify-between mb-3 pb-2 border-b border-amber-500/20">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_#f59e0b]" />
+              <span className="text-xs font-bold tracking-widest text-amber-400 uppercase">
+                Map (Level 3: Associative)
+              </span>
+            </div>
+            <span className="text-amber-300 font-bold text-xs">
+              {mapEntry[0]} ({mapEntry[1]?.size ?? (mapEntry[1]?.entries?.length ?? 0)} elements)
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+            {(mapEntry[1]?.entries || []).map((entry: any, idx: number) => (
+              <div
+                key={idx}
+                className="p-2 rounded bg-amber-950/40 border border-amber-500/30 flex items-center justify-between"
+              >
+                <div className="text-xs">
+                  <span className="text-[10px] text-amber-400 block font-normal">Key</span>
+                  <span className="font-bold text-white font-mono">{entry.key}</span>
+                </div>
+                <span className="text-slate-500">→</span>
+                <div className="text-right text-xs">
+                  <span className="text-[10px] text-emerald-400 block font-normal">Count</span>
+                  <span className="font-bold text-emerald-300 font-mono">{entry.value}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ PAIR ITERATOR CARD (Level 1: Basic) ═══ */}
+      {pairEntry && (
+        <div className="rounded-xl border border-purple-500/30 bg-[#140b1e]/90 p-4 shadow-lg backdrop-blur-md">
+          <div className="flex items-center justify-between mb-3 pb-2 border-b border-purple-500/20">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-purple-400 shadow-[0_0_8px_#c084fc]" />
+              <span className="text-xs font-bold tracking-widest text-purple-400 uppercase">
+                Pair (Level 1: Basic)
+              </span>
+            </div>
+            <span className="text-purple-300 font-bold text-xs">
+              {pairEntry[0]}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-3 rounded bg-purple-950/40 border border-purple-500/30 text-center">
+              <span className="text-[10px] text-purple-400 font-bold uppercase tracking-wider block">
+                it.first (Key)
+              </span>
+              <span className="text-lg font-bold text-white font-mono mt-1 block">
+                {formatDisplayValue(
+                  pairEntry[1]?.__isPair
+                    ? pairEntry[1].first
+                    : Array.isArray(pairEntry[1]) && pairEntry[1][0]
+                    ? String(pairEntry[1][0]).replace('first =', '').trim()
+                    : '—',
+                  '—'
+                )}
+              </span>
+            </div>
+            <div className="p-3 rounded bg-cyan-950/40 border border-cyan-500/30 text-center">
+              <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider block">
+                it.second (Value)
+              </span>
+              <span className="text-lg font-bold text-white font-mono mt-1 block">
+                {formatDisplayValue(
+                  pairEntry[1]?.__isPair
+                    ? pairEntry[1].second
+                    : Array.isArray(pairEntry[1]) && pairEntry[1][1]
+                    ? String(pairEntry[1][1]).replace('second =', '').trim()
+                    : '—',
+                  '—'
+                )}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ ARRAY CARD (Level 1: Basic) ═══ */}
       {hasArray && (
         <div className="rounded-xl border border-cyan-500/30 bg-[#09111e]/90 p-4 shadow-lg backdrop-blur-md">
           <div className="flex items-center justify-between mb-3 pb-2 border-b border-cyan-500/20">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#00f0ff]" />
               <span className="text-xs font-bold tracking-widest text-cyan-400 uppercase">
-                Array
+                Vector / Array
               </span>
             </div>
             <span className="text-cyan-400 font-bold text-xs">
@@ -108,6 +214,7 @@ export const DsaSynced2DView: React.FC<DsaSynced2DViewProps> = ({
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
             {primaryArr.map((val: any, idx: number) => {
               const isActive = idx === activeIdx || activeIndices.includes(idx);
+              const isGarbage = isGarbageValue(val);
               const pointersHere = Object.entries(pointerMap)
                 .filter(([, v]) => v === idx)
                 .map(([k]) => k);
@@ -118,10 +225,13 @@ export const DsaSynced2DView: React.FC<DsaSynced2DViewProps> = ({
                     className={`w-10 h-10 rounded flex items-center justify-center font-bold text-sm transition-all duration-300 ${
                       isActive
                         ? 'bg-cyan-400 text-slate-950 shadow-[0_0_12px_#00f0ff] scale-105'
+                        : isGarbage
+                        ? 'bg-slate-900 text-slate-600 border border-slate-800'
                         : 'bg-[#141e2e] text-slate-200 border border-slate-700'
                     }`}
+                    title={isGarbage ? 'Uninitialized garbage (suppressed)' : `[${idx}] = ${val}`}
                   >
-                    {String(val ?? 0)}
+                    {isGarbage ? '—' : formatDisplayValue(val, '—')}
                   </div>
                   <span className="text-[10px] text-slate-500 mt-1">{idx}</span>
                   {pointersHere.length > 0 && (
